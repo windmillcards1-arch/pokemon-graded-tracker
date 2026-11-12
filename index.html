@@ -3,28 +3,126 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pokemon BGS 9.5 Tracker</title>
+<title>Pokemon Regrade Tracker</title>
 <style>
   :root { --bg:#eef1f5; --card:#fff; --ink:#14213d; --mute:#5b6577; --line:#d7dde6; --accent:#c8102e; --ok:#1b7f4b; }
   @media (prefers-color-scheme: dark) { :root { --bg:#0f1624; --card:#17213a; --ink:#e8edf6; --mute:#9aa7bd; --line:#2a3757; --accent:#ff5a6e; --ok:#4cc38a; } }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
-  main { max-width:1000px; margin:0 auto; padding:24px 16px 48px; }
+  main { max-width:1100px; margin:0 auto; padding:24px 16px 48px; }
   h1 { font-size:1.6rem; margin:0 0 4px; }
   p.sub { margin:0 0 20px; color:var(--mute); }
-  .bar { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
+  .bar { display:flex; gap:16px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
   input[type=search] { flex:1; min-width:200px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); font:inherit; }
   label { color:var(--mute); font-size:.9rem; }
   .wrap { overflow-x:auto; background:var(--card); border:1px solid var(--line); border-radius:10px; }
-  table { width:100%; border-collapse:collapse; min-width:640px; }
+  table { width:100%; border-collapse:collapse; min-width:760px; }
   th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); }
   th { cursor:pointer; font-weight:600; color:var(--mute); font-size:.9rem; white-space:nowrap; }
-  th:hover, th:focus-visible { color:var(--ink); outline:none; }
+  th:hover { color:var(--ink); }
   td.n, th.n { text-align:right; font-variant-numeric:tabular-nums; }
   tr:last-child td { border-bottom:none; }
   .thin { color:var(--mute); font-size:.85rem; }
-  .big { font-weight:700; }
+  .gap { font-weight:700; color:var(--ok); }
+  .neg { color:var(--accent); }
+  .none { color:var(--mute); }
   .empty { padding:32px; text-align:center; color:var(--mute); }
+</style>
+</head>
+<body>
+<main>
+  <h1>BGS 9.5 cards at $1,000+ vs. PSA 10</h1>
+  <p class="sub" id="sub">Loading sold listings...</p>
+  <div class="bar">
+    <input type="search" id="q" placeholder="Filter by card name" aria-label="Filter by card name">
+    <label><input type="checkbox" id="top" checked> Top 50 by gap only</label>
+    <label><input type="checkbox" id="thin" checked> Include cards with fewer than 10 BGS 9.5 sales</label>
+  </div>
+  <div class="wrap"><table>
+    <thead><tr>
+      <th data-k="name">Card</th>
+      <th class="n" data-k="bgs">BGS 9.5 median</th>
+      <th class="n" data-k="psa">PSA 10 median</th>
+      <th class="n" data-k="gap">Gap ($)</th>
+      <th class="n" data-k="gapPct">Gap (%)</th>
+      <th class="n" data-k="bgsCount">BGS 9.5 sales</th>
+      <th class="n" data-k="date">Last BGS sale</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+</main>
+<script>
+const PRICE = x => Number(x.soldPrice ?? x.price ?? x.sold_price ?? 0);
+const DATE  = x => new Date(x.endedAt ?? x.soldDate ?? x.endDate ?? x.saleEndDate ?? x.date ?? 0);
+const TITLE = x => String(x.title ?? "");
+const MIN = 1000;
+let cards = [], sortKey = "gap", sortDir = -1;
+
+const median = a => { const s=[...a].sort((x,y)=>x-y), m=s.length>>1; return s.length%2 ? s[m] : (s[m-1]+s[m])/2; };
+const usd = n => n == null ? "n/a" : "$" + Math.round(n).toLocaleString("en-US");
+const esc = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+
+function gradeOf(t) {
+  t = t.toLowerCase();
+  if (/\bpsa\s*10\b/.test(t)) return "psa";
+  if (/\b(bgs|beckett)\s*9\.5\b/.test(t)) return "bgs";
+  return null; // PCG 9.5 and CGC 10 titles are skipped for now
+}
+// Card key: the title with grading company, grade and filler words removed, so all grades of one card group together.
+const nameOf = t => t.toLowerCase()
+  .replace(/\b(psa|bgs|beckett|pcg|cgc|sgc)\s*[0-9.]*/g, " ")
+  .replace(/\b(gem|mint|mt|pristine|graded|slab|pokemon|tcg|card|cards)\b/g, " ")
+  .replace(/[^a-z0-9\/ ]/g, " ").replace(/\s+/g, " ").trim();
+
+fetch("data/sales.json").then(r => r.json()).then(sales => {
+  const groups = {};
+  let matched = 0;
+  sales.filter(x => PRICE(x) > 0).forEach(x => {
+    const g = gradeOf(TITLE(x)); if (!g) return;
+    matched++;
+    const k = nameOf(TITLE(x));
+    ((groups[k] ||= {psa:[], bgs:[]})[g]).push(x);
+  });
+  const last10 = list => list.sort((a,b) => DATE(b) - DATE(a)).slice(0,10).map(PRICE);
+  cards = Object.values(groups).filter(g => g.bgs.length).map(g => {
+    g.bgs.sort((a,b) => DATE(b) - DATE(a));
+    const bgs = median(last10(g.bgs));
+    const psa = g.psa.length ? median(last10(g.psa)) : null;
+    return { name: TITLE(g.bgs[0]), bgs, psa, gap: psa == null ? null : psa - bgs,
+             gapPct: psa == null ? null : (psa - bgs) / bgs * 100,
+             bgsCount: g.bgs.length, psaCount: g.psa.length, date: DATE(g.bgs[0]) };
+  }).filter(c => c.bgs >= MIN);
+  document.getElementById("sub").textContent = sales.length + " sold listings loaded, " + matched +
+    " matched a PSA 10 or BGS 9.5 title, " + cards.length + " cards with a BGS 9.5 median of $1,000 or more. Gap is PSA 10 median minus BGS 9.5 median; it ignores regrade fees and the chance of not getting a 10.";
+  draw();
+}).catch(() => { document.getElementById("sub").textContent = "Could not load data/sales.json."; });
+
+function draw() {
+  const q = document.getElementById("q").value.toLowerCase();
+  const thin = document.getElementById("thin").checked, top = document.getElementById("top").checked;
+  const val = (c, k) => c[k] ?? -Infinity;
+  let rows = cards.filter(c => c.name.toLowerCase().includes(q) && (thin || c.bgsCount >= 10))
+    .sort((a,b) => (typeof a[sortKey] === "string" ? a.name.localeCompare(b.name) : val(a,sortKey) - val(b,sortKey)) * sortDir);
+  if (top) rows = [...rows].sort((a,b) => val(b,"gap") - val(a,"gap")).slice(0,50).sort((a,b) =>
+    (typeof a[sortKey] === "string" ? a.name.localeCompare(b.name) : val(a,sortKey) - val(b,sortKey)) * sortDir);
+  document.getElementById("rows").innerHTML = rows.length ? rows.map(c => `<tr>
+    <td>${esc(c.name)}${c.bgsCount < 10 ? '<div class="thin">Thin data: only ' + c.bgsCount + ' BGS 9.5 sales</div>' : ""}</td>
+    <td class="n">${usd(c.bgs)}</td>
+    <td class="n ${c.psa == null ? "none" : ""}">${usd(c.psa)}${c.psa != null && c.psaCount < 10 ? '<div class="thin">' + c.psaCount + ' sales</div>' : ""}</td>
+    <td class="n ${c.gap == null ? "none" : c.gap < 0 ? "neg" : "gap"}">${c.gap == null ? "n/a" : (c.gap < 0 ? "-" : "") + usd(Math.abs(c.gap))}</td>
+    <td class="n ${c.gap == null ? "none" : ""}">${c.gapPct == null ? "n/a" : Math.round(c.gapPct) + "%"}</td>
+    <td class="n">${c.bgsCount}</td><td class="n">${c.date.getTime() ? c.date.toLocaleDateString("en-US") : "n/a"}</td></tr>`).join("")
+    : '<tr><td colspan="7" class="empty">No cards match yet. If the line above shows 0 matched, the sales titles may not include "BGS 9.5" or "PSA 10".</td></tr>';
+}
+document.getElementById("q").oninput = draw;
+document.getElementById("thin").onchange = draw;
+document.getElementById("top").onchange = draw;
+document.querySelectorAll("th").forEach(th => th.onclick = () => {
+  const k = th.dataset.k; sortDir = (k === sortKey) ? -sortDir : -1; sortKey = k; draw();
+});
+</script>
+</body>
+</html>
 </style>
 </head>
 <body>
