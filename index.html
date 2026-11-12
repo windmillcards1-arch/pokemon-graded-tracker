@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pokemon BGS 9.5 Tracker</title>
+<style>
+  :root { --bg:#eef1f5; --card:#fff; --ink:#14213d; --mute:#5b6577; --line:#d7dde6; --accent:#c8102e; --ok:#1b7f4b; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1624; --card:#17213a; --ink:#e8edf6; --mute:#9aa7bd; --line:#2a3757; --accent:#ff5a6e; --ok:#4cc38a; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { max-width:1000px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:1.6rem; margin:0 0 4px; }
+  p.sub { margin:0 0 20px; color:var(--mute); }
+  .bar { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
+  input[type=search] { flex:1; min-width:200px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); font:inherit; }
+  label { color:var(--mute); font-size:.9rem; }
+  .wrap { overflow-x:auto; background:var(--card); border:1px solid var(--line); border-radius:10px; }
+  table { width:100%; border-collapse:collapse; min-width:640px; }
+  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); }
+  th { cursor:pointer; font-weight:600; color:var(--mute); font-size:.9rem; white-space:nowrap; }
+  th:hover, th:focus-visible { color:var(--ink); outline:none; }
+  td.n, th.n { text-align:right; font-variant-numeric:tabular-nums; }
+  tr:last-child td { border-bottom:none; }
+  .thin { color:var(--mute); font-size:.85rem; }
+  .big { font-weight:700; }
+  .empty { padding:32px; text-align:center; color:var(--mute); }
+</style>
+</head>
+<body>
+<main>
+  <h1>BGS 9.5 cards at $1,000+</h1>
+  <p class="sub" id="sub">Loading sold listings...</p>
+  <div class="bar">
+    <input type="search" id="q" placeholder="Filter by card name" aria-label="Filter by card name">
+    <label><input type="checkbox" id="thin" checked> Include cards with fewer than 10 sales</label>
+  </div>
+  <div class="wrap"><table>
+    <thead><tr>
+      <th data-k="name">Card</th>
+      <th class="n" data-k="median">Median, last 10</th>
+      <th class="n" data-k="last">Latest sale</th>
+      <th class="n" data-k="count">Sales on file</th>
+      <th class="n" data-k="date">Last sold</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+</main>
+<script>
+const PRICE = x => Number(x.soldPrice ?? x.price ?? x.sold_price ?? 0);
+const DATE  = x => new Date(x.endedAt ?? x.soldDate ?? x.endDate ?? x.saleEndDate ?? x.date ?? 0);
+const TITLE = x => String(x.title ?? "");
+const MIN = 1000;
+let cards = [], sortKey = "median", sortDir = -1;
+
+const median = a => { const s=[...a].sort((x,y)=>x-y), m=s.length>>1; return s.length%2 ? s[m] : (s[m-1]+s[m])/2; };
+const usd = n => "$" + Math.round(n).toLocaleString("en-US");
+// Groups listings by title with grade/condition words removed, so "BGS 9.5" and "Beckett 9.5" variants merge.
+const nameOf = t => t.toLowerCase().replace(/\b(bgs|beckett|psa|cgc|pcg|gem mint|mint|graded|slab|9\.5|10)\b/g," ").replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim();
+
+fetch("data/sales.json").then(r => r.json()).then(sales => {
+  const groups = {};
+  sales.filter(x => PRICE(x) > 0).forEach(x => { (groups[nameOf(TITLE(x))] ||= []).push(x); });
+  cards = Object.entries(groups).map(([name, list]) => {
+    list.sort((a,b) => DATE(b) - DATE(a));
+    const last10 = list.slice(0,10).map(PRICE);
+    return { name: TITLE(list[0]), median: median(last10), last: PRICE(list[0]), count: list.length, date: DATE(list[0]) };
+  }).filter(c => c.median >= MIN);
+  document.getElementById("sub").textContent = cards.length + " cards with a median sold price of $1,000 or more across their last 10 sales. Updated daily.";
+  draw();
+});
+
+function draw() {
+  const q = document.getElementById("q").value.toLowerCase();
+  const thin = document.getElementById("thin").checked;
+  const rows = cards.filter(c => c.name.toLowerCase().includes(q) && (thin || c.count >= 10))
+    .sort((a,b) => (a[sortKey] > b[sortKey] ? 1 : -1) * sortDir);
+  document.getElementById("rows").innerHTML = rows.length ? rows.map(c => `<tr>
+    <td>${c.name.replace(/</g,"&lt;")}${c.count < 10 ? '<div class="thin">Thin data: only ' + c.count + ' sales</div>' : ""}</td>
+    <td class="n big">${usd(c.median)}</td><td class="n">${usd(c.last)}</td><td class="n">${c.count}</td>
+    <td class="n">${c.date.toLocaleDateString("en-US")}</td></tr>`).join("")
+    : '<tr><td colspan="5" class="empty">No cards match yet. Run the refresh once to load sales.</td></tr>';
+}
+document.getElementById("q").oninput = draw;
+document.getElementById("thin").onchange = draw;
+document.querySelectorAll("th").forEach(th => th.onclick = () => {
+  const k = th.dataset.k; sortDir = (k === sortKey) ? -sortDir : -1; sortKey = k; draw();
+});
+</script>
+</body>
+</html>
